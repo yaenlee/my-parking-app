@@ -4,19 +4,30 @@ import pandas as pd
 import urllib3
 import os
 
-# --- [1] 環境淨化 ---
+# --- [1] 環境設定 ---
 os.environ.pop('HTTP_PROXY', None)
 os.environ.pop('HTTPS_PROXY', None)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="停車監控中心", layout="wide")
 
-# --- [2] 初始化車庫清單 (使用 Session State 儲存) ---
+# --- [2] 初始化 Session State ---
 if 'vehicle_list' not in st.session_state:
-    # 這裡可以預設放妳最常用的車號
-    st.session_state.vehicle_list = ["BWS-8036"]
+    st.session_state.vehicle_list = [] # 改成空清單，讓介面從零開始
 
-# --- [3] 查詢核心函式 ---
+# --- [3] 定義 Callback 函式 (這就是解決錯誤的關鍵) ---
+def add_car_callback():
+    # 從暫存區拿值
+    new_car = st.session_state.temp_input.upper().strip()
+    if new_car and new_car not in st.session_state.vehicle_list:
+        st.session_state.vehicle_list.append(new_car)
+    # 這裡清空輸入框是安全的，因為是在按鈕觸發的當下執行
+    st.session_state.temp_input = ""
+
+def clear_list_callback():
+    st.session_state.vehicle_list = []
+
+# --- [4] 查詢邏輯 ---
 def fetch_data(car_no, type_code):
     clean_car = car_no.replace('-', '').strip()
     res = {"車號": car_no}
@@ -38,72 +49,56 @@ def fetch_data(car_no, type_code):
         except: res[city] = "❌ 異常"
     return res, car_total
 
-# --- [4] UI 佈局 ---
+# --- [5] UI 佈局 ---
 st.title("🚗 全方位停車費監控面板")
 
 with st.sidebar:
     st.header("⚙️ 車庫管理")
     
-    # 新增車號
-    with st.container():
-        new_car = st.text_input("➕ 輸入車號", placeholder="例如: ABC-1234").upper().strip()
-        if st.button("新增至監控清單", use_container_width=True):
-            if new_car and new_car not in st.session_state.vehicle_list:
-                st.session_state.vehicle_list.append(new_car)
-                st.rerun()
+    # 使用 key="temp_input" 綁定
+    st.text_input("➕ 輸入車號", key="temp_input", placeholder="例如: ABC-1234")
+    
+    col_add, col_clear = st.columns(2)
+    with col_add:
+        # 使用 on_click 觸發剛才寫好的 Callback
+        st.button("新增車號", on_click=add_car_callback, use_container_width=True, type="secondary")
+    
+    with col_clear:
+        st.button("清空清單", on_click=clear_list_callback, use_container_width=True)
     
     st.divider()
     
-    # 選擇要查詢的車輛 (可多選)
     selected_targets = st.multiselect(
-        "🎯 選擇本次監控對象",
+        "🎯 選擇監控對象",
         options=st.session_state.vehicle_list,
-        default=st.session_state.vehicle_list # 預設全選
+        default=st.session_state.vehicle_list
     )
     
-    st.divider()
     car_type = st.radio("車種設定", ["汽車", "機車"], horizontal=True)
     t_code = 'C' if car_type == "汽車" else 'M'
     
-    # 執行按鈕
     start_btn = st.button("🚀 執行多車同步掃描", type="primary", use_container_width=True)
 
-# --- [5] 顯示結果 ---
+# --- [6] 顯示結果 ---
 if start_btn:
     if not selected_targets:
-        st.warning("請先在左側選取或新增至少一個車號。")
+        st.warning("請先新增並勾選車號。")
     else:
         all_results = []
         grand_total = 0
+        with st.spinner('掃描中...'):
+            for car in selected_targets:
+                res, total = fetch_data(car, t_code)
+                all_results.append(res)
+                grand_total += total
         
-        # 顯示進度條
-        progress_text = "連線政府伺服器中..."
-        my_bar = st.progress(0, text=progress_text)
-        
-        for index, car in enumerate(selected_targets):
-            res, total = fetch_data(car, t_code)
-            all_results.append(res)
-            grand_total += total
-            my_bar.progress((index + 1) / len(selected_targets))
-        
-        my_bar.empty()
-        
-        # 頂部數據看板
         c1, c2 = st.columns(2)
-        c1.metric("監控車輛總數", f"{len(selected_targets)} 台")
-        c2.metric("全車庫總待繳", f"{grand_total} 元", delta=f"{grand_total}元" if grand_total > 0 else None, delta_color="inverse")
+        c1.metric("監控數量", f"{len(selected_targets)} 台")
+        c2.metric("總待繳金額", f"{grand_total} 元", delta=f"{grand_total}元" if grand_total > 0 else None, delta_color="inverse")
         
-        # 詳細表格
-        st.subheader("📋 實時監控報表")
-        df = pd.DataFrame(all_results).set_index("車號")
-        st.table(df)
+        st.table(pd.DataFrame(all_results).set_index("車號"))
         
         if grand_total > 0:
-            st.error("📢 偵測到未繳費項目，請點擊 [台北通](https://pay.taipei/) 或各縣市官網處理。")
+            st.error("📢 偵測到未繳費項目！")
         else:
-            st.success("✅ 目前所有選定車輛狀態良好。")
-else:
-    st.info("💡 操作指南：\n1. 在左側輸入車號點擊『新增』。\n2. 在『選擇監控對象』勾選妳想查的所有車輛。\n3. 按下『執行多車同步掃描』即可一次看完。")
-
-st.divider()
-st.caption("IT Note: 已優化北北桃連線路徑，支援同時多車異步查詢。")
+            st.success("✅ 目前狀態良好。")
