@@ -9,18 +9,21 @@ os.environ.pop('HTTP_PROXY', None)
 os.environ.pop('HTTPS_PROXY', None)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 設定網頁標題與寬度佈局
-st.set_page_config(page_title="停車監控中心", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="停車監控中心", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
 # --- [2] 初始化 Session State ---
 if 'vehicle_list' not in st.session_state:
     st.session_state.vehicle_list = []
 
-# --- [3] Callback 函式 (處理批量新增與清空) ---
+# --- [3] Callback 函式 ---
 def add_car_callback():
     raw_input = st.session_state.temp_input.upper().strip()
     if raw_input:
-        # 支援空格、逗號、全形逗號、換行分隔
+        # 支援多種分隔符號批量新增
         new_cars = raw_input.replace(',', ' ').replace('，', ' ').replace('\n', ' ').split()
         for car in new_cars:
             car = car.strip()
@@ -53,7 +56,7 @@ def fetch_data(car_no, type_code):
         except: res[city] = "❌ 異常"
     return res, car_total
 
-# --- [5] UI 側邊欄 (手機版會縮成左上角箭頭) ---
+# --- [5] UI 側邊欄 ---
 with st.sidebar:
     st.header("⚙️ 監控清單管理")
     
@@ -81,47 +84,53 @@ with st.sidebar:
     car_type = st.radio("車種", ["汽車", "機車"], horizontal=True)
     t_code = 'C' if car_type == "汽車" else 'M'
     
-    # 查詢按鈕
     start_btn = st.button("🚀 執行同步掃描", use_container_width=True)
+
+    st.divider()
+    # --- 法律免責聲明區塊 ---
+    with st.expander("⚖️ 法律免責聲明"):
+        st.caption("""
+        1. 本工具僅供學術研究與個人便利使用，非政府官方程式。
+        2. 使用者輸入車號即表示已獲得車主授權查詢。
+        3. 本程式不蒐集、不儲存任何車牌個資，關閉視窗即清除記錄。
+        4. 資料來源為各縣市政府公開 API，正確資訊請以官網為準。
+        """)
 
 # --- [6] 主畫面顯示 ---
 st.title("🚗 北北桃停車監控中心")
 
 if start_btn:
     if not selected_targets:
-        st.warning("請展開左側選單並新增車號。")
+        st.warning("請點擊左上角箭頭 『 > 』 展開選單並新增車號。")
     else:
         all_results = []
         grand_total = 0
         
-        with st.spinner('掃描中...'):
+        with st.spinner('同步連線政府 API 中...'):
             for car in selected_targets:
                 res, total = fetch_data(car, t_code)
                 all_results.append(res)
                 grand_total += total
         
-        # 指標看板 (手機會自動垂直堆疊)
         m1, m2 = st.columns(2)
         m1.metric("監控數量", f"{len(selected_targets)} 台")
         m2.metric("待繳總額", f"{grand_total} 元", delta=f"{grand_total}元" if grand_total > 0 else None, delta_color="inverse")
         
-        # 詳細表格 (支援手機橫向滑動)
         st.subheader("📋 查詢詳情")
         df = pd.DataFrame(all_results).set_index("車號")
         st.dataframe(df, use_container_width=True) 
         
         if grand_total > 0:
-            st.error("📢 偵測到未繳費項目！")
+            st.error("📢 偵測到未繳費項目，請點擊 [台北通](https://pay.taipei/) 繳費。")
         else:
-            st.success("✅ 狀態正常，無待繳費用。")
+            st.success("✅ 檢查完畢，目前所有車輛均無待繳費用。")
 else:
-    # 專為手機用戶設計的說明
     st.info("""
     ### 📱 快速操作指南
-    1. **手機用戶**：請點擊左上角箭頭 **『 > 』** 展開設定選單。
-    2. **電腦用戶**：直接在左側側邊欄操作。
-    3. **功能**：支援同時輸入多個車號（用空格隔開），一鍵查詢北北桃。
+    1. **手機用戶**：點擊左上角 **『 > 』** 展開設定選單。
+    2. **功能**：支援同時輸入多個車號（用空格隔開），一鍵查詢北北桃。
+    3. **安全**：本工具不儲存任何個資，請放心使用。
     """)
 
 st.divider()
-st.caption("IT Note: 介面已優化 RWD 響應式佈局，支援 iOS/Android 瀏覽器。")
+st.caption(f"IT Note: 系統運行中 | 當前時間: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
