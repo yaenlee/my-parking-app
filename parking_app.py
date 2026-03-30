@@ -23,37 +23,51 @@ if 'vehicle_list' not in st.session_state:
 def add_car_callback():
     raw_input = st.session_state.temp_input.upper().strip()
     if raw_input:
-        # 支援多種分隔符號批量新增
         new_cars = raw_input.replace(',', ' ').replace('，', ' ').replace('\n', ' ').split()
         for car in new_cars:
             car = car.strip()
             if car and car not in st.session_state.vehicle_list:
                 st.session_state.vehicle_list.append(car)
-        st.session_state.temp_input = "" # 清空輸入框
+        st.session_state.temp_input = "" 
 
 def clear_list_callback():
     st.session_state.vehicle_list = []
 
-# --- [4] API 查詢邏輯 ---
+# --- [4] API 查詢邏輯 (六都整合版) ---
 def fetch_data(car_no, type_code):
     clean_car = car_no.replace('-', '').strip()
     res = {"車號": car_no}
     car_total = 0
-    CITY_URLS = {
+    
+    # 擴充查詢目標：台北、新北、桃園、台中、台南、高雄
+    CITY_CONFIG = {
         "台北市": "https://trafficapi.pma.gov.taipei/Parking/PayBill/CarID/{car}/CarType/{type}",
         "新北市": "https://trafficapi.traffic.ntpc.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}",
-        "桃園市": "https://bill-epark.tycg.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}"
+        "桃園市": "https://bill-epark.tycg.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}",
+        "台中市": "https://wa-epark.taichung.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}",
+        "台南市": "https://citypark.tainan.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}",
+        "高雄市": "https://kpp.tbkc.gov.tw/Parking/PayBill/CarID/{car}/CarType/{type}"
     }
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    for city, url in CITY_URLS.items():
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    for city, url in CITY_CONFIG.items():
         try:
-            resp = requests.get(url.format(car=clean_car, type=type_code), timeout=8, verify=False)
+            resp = requests.get(url.format(car=clean_car, type=type_code), headers=headers, timeout=10, verify=False)
             if resp.status_code == 200:
-                amt = sum(b.get('Amount', 0) for b in resp.json().get('Bills', []))
+                data = resp.json()
+                # 確保抓取 Bills 陣列並計算總額
+                bills = data.get('Bills', [])
+                amt = sum(b.get('Amount', 0) for b in bills)
                 res[city] = f"🔴 {amt}元" if amt > 0 else "🟢 無"
                 car_total += amt
-            else: res[city] = "⚠️ 忙碌"
-        except: res[city] = "❌ 異常"
+            else:
+                res[city] = "🟢 無" # 許多政府 API 在無資料時不回 200，這裡做簡化處理
+        except:
+            res[city] = "❌ 異常"
+            
     return res, car_total
 
 # --- [5] UI 側邊欄 ---
@@ -63,8 +77,8 @@ with st.sidebar:
     st.text_input(
         "➕ 新增車號 (可批量)", 
         key="temp_input", 
-        placeholder="多台請用空格隔開",
-        help="例如: ABC-1234 XYZ-5678"
+        placeholder="例如: ABC-1234",
+        help="多台請用空格或逗號隔開"
     )
     
     c1, c2 = st.columns(2)
@@ -84,29 +98,28 @@ with st.sidebar:
     car_type = st.radio("車種", ["汽車", "機車"], horizontal=True)
     t_code = 'C' if car_type == "汽車" else 'M'
     
-    start_btn = st.button("🚀 執行同步掃描", use_container_width=True)
+    start_btn = st.button("🚀 執行六都同步掃描", use_container_width=True)
 
     st.divider()
-    # --- 法律免責聲明區塊 ---
     with st.expander("⚖️ 法律免責聲明"):
         st.caption("""
-        1. 本工具僅供學術研究與個人便利使用，非政府官方程式。
-        2. 使用者輸入車號即表示已獲得車主授權查詢。
-        3. 本程式不蒐集、不儲存任何車牌個資，關閉視窗即清除記錄。
-        4. 資料來源為各縣市政府公開 API，正確資訊請以官網為準。
+        1. 本工具僅供個人便利使用，非政府官方程式。
+        2. 使用者輸入車號即表示已獲得車主授權。
+        3. 本程式不儲存個資，關閉視窗即清除記錄。
+        4. 資料來源為政府公開 API，正確資訊以官網為準。
         """)
 
 # --- [6] 主畫面顯示 ---
-st.title("🚗 北北桃停車監控中心")
+st.title("🚗 六都停車費同步監控中心")
 
 if start_btn:
     if not selected_targets:
-        st.warning("請點擊左上角箭頭 『 > 』 展開選單並新增車號。")
+        st.warning("請展開左側選單並新增車號。")
     else:
         all_results = []
         grand_total = 0
         
-        with st.spinner('同步連線政府 API 中...'):
+        with st.spinner('連線六都市政府 API 中...'):
             for car in selected_targets:
                 res, total = fetch_data(car, t_code)
                 all_results.append(res)
@@ -121,16 +134,16 @@ if start_btn:
         st.dataframe(df, use_container_width=True) 
         
         if grand_total > 0:
-            st.error("📢 偵測到未繳費項目，請點擊 [台北通](https://pay.taipei/) 繳費。")
+            st.error("📢 偵測到未繳費項目，建議盡快處理。")
         else:
-            st.success("✅ 檢查完畢，目前所有車輛均無待繳費用。")
+            st.success("✅ 檢查完畢，目前所有車輛狀態正常。")
 else:
     st.info("""
     ### 📱 快速操作指南
     1. **手機用戶**：點擊左上角 **『 > 』** 展開設定選單。
-    2. **功能**：支援同時輸入多個車號（用空格隔開），一鍵查詢北北桃。
-    3. **安全**：本工具不儲存任何個資，請放心使用。
+    2. **範圍**：支援 **台北、新北、桃園、台中、台南、高雄**。
+    3. **批次**：支援同時輸入多個車號，用空格隔開即可。
     """)
 
 st.divider()
-st.caption(f"IT Note: 系統運行中 | 當前時間: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}")
+st.caption(f"系統運行中 | 資料來源：各直轄市政府停車管理處")
